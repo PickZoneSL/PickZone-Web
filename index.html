@@ -1390,7 +1390,223 @@ function getDefaultProducts(){return[
 {code:'P00005',title:'Cushion Cover',price:1200,categories:['Home items','Gifts'],images:['https://picsum.photos/400/400?random=5','https://picsum.photos/400/400?random=55']},
 ]}
 
+
+/* ========================= A2Z DROPSHIPPING CATALOG INTEGRATION ========================= */
+const A2Z_SOURCE_URL='https://a2zdropshipping.lk/Product/view';
+const A2Z_STORAGE_KEY='pickzone_a2z_catalog';
+const A2Z_IMPORTED_AT='pickzone_a2z_imported_at';
+const A2Z_CATEGORIES=['Clothes','Shoes','Phones','Electronics','Home items','Kitchen items','Beauty products','Books','Stationery','Gifts','Pet supplies','Toys','Plants','Gardening supplies','Car accessories'];
+
+function a2zCleanText(v){return String(v??'').replace(/\s+/g,' ').trim()}
+function a2zFirstNonEmpty(...vals){for(const v of vals){const t=a2zCleanText(v);if(t)return t}return''}
+function a2zAbsUrl(url,base=A2Z_SOURCE_URL){if(!url)return'';try{return new URL(String(url).trim(),base).href}catch{return String(url).trim()}}
+function a2zNormalizePrice(v){if(typeof v==='number'&&Number.isFinite(v))return Math.round(v);const s=String(v??'').replace(/,/g,'').replace(/[^\d.]/g,'');const n=parseFloat(s);return Number.isFinite(n)?Math.round(n):0}
+function a2zEscape(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
+
+function classifyA2ZItem(title){
+  const t=String(title||'').toLowerCase();
+  const rules=[
+    ['Clothes',/\b(tshirt|t-shirt|shirt|dress|top|hoodie|jacket|jeans|trouser|pant|shorts|legging|skirt|wear|clothing|saree|sari|frock)\b/],
+    ['Shoes',/\b(shoe|sandal|slipper|sneaker|boot|heel|loafer|footwear)\b/],
+    ['Phones',/\b(phone|mobile|smartphone|iphone|android|case|cover|screen protector|tempered glass|charger cable)\b/],
+    ['Electronics',/\b(earbud|earphone|headphone|speaker|bluetooth|power bank|smart watch|watch|usb|led|lamp|camera|tripod|microphone|keyboard|mouse|router|adapter|hub|electronic)\b/],
+    ['Home items',/\b(home|pillow|cushion|curtain|storage|organizer|mat|rug|blanket|hanger|mirror|clock|decor|decoration|rack|basket)\b/],
+    ['Kitchen items',/\b(kitchen|cook|pan|pot|knife|spoon|fork|plate|cup|mug|bottle|lunch box|container|chopper|peeler|grinder|strainer)\b/],
+    ['Beauty products',/\b(beauty|makeup|cosmetic|lipstick|mascara|eyeliner|brush|serum|cream|lotion|skin|hair|shampoo|facial|nail)\b/],
+    ['Books',/\b(book|novel|dictionary|comic|journal|notebook)\b/],
+    ['Stationery',/\b(pen|pencil|marker|eraser|stapler|stationery|file|folder|ruler|calculator|sticky note)\b/],
+    ['Gifts',/\b(gift|present|keychain|souvenir|birthday|anniversary)\b/],
+    ['Pet supplies',/\b(pet|dog|cat|puppy|kitten|leash|collar|feeder|pet toy)\b/],
+    ['Toys',/\b(toy|game|puzzle|doll|lego|remote control|rc car|kids|children)\b/],
+    ['Plants',/\b(plant|flower|succulent|seed|pot plant|indoor plant)\b/],
+    ['Gardening supplies',/\b(garden|gardening|soil|fertilizer|shovel|spade|mammoty|pruner|watering|sprinkler)\b/],
+    ['Car accessories',/\b(car|vehicle|auto|dashboard|car holder|car charger|seat cover|vacuum cleaner|tyre|tire)\b/]
+  ];
+  for(const [cat,re] of rules)if(re.test(t))return[cat];
+  return['Home items'];
+}
+
+function a2zDeduplicate(items){
+  const map=new Map();
+  for(const raw of (Array.isArray(items)?items:[])){
+    const cats=Array.isArray(raw.categories)?raw.categories:(raw.categories?[raw.categories]:[]);
+    const imgs=Array.isArray(raw.images)?raw.images:(raw.images?[raw.images]:[]);
+    const code=a2zCleanText(raw.code).toUpperCase();
+    const title=a2zCleanText(raw.title);
+    if(!code&&!title)continue;
+    const key=code||title.toLowerCase();
+    const candidate={code:code||('A2Z-'+String(map.size+1).padStart(4,'0')),title:title||'A2Z Product',price:a2zNormalizePrice(raw.price),categories:cats.filter(Boolean).map(a2zCleanText),images:imgs.map(a2zAbsUrl).filter(Boolean)};
+    if(!map.has(key))map.set(key,candidate);
+    else{
+      const old=map.get(key);
+      old.price=old.price||candidate.price;
+      old.categories=Array.from(new Set([...(old.categories||[]),...(candidate.categories||[])]));
+      old.images=Array.from(new Set([...(old.images||[]),...(candidate.images||[])]));
+    }
+  }
+  return Array.from(map.values()).map(p=>({code:p.code,title:p.title,price:p.price,categories:p.categories.length?p.categories:classifyA2ZItem(p.title),images:p.images.slice(0,8)}));
+}
+
+function extractA2ZJsonObject(obj){
+  const arr=Array.isArray(obj)?obj:(Array.isArray(obj?.products)?obj.products:(Array.isArray(obj?.items)?obj.items:(Array.isArray(obj?.data)?obj.data:[])));
+  return a2zDeduplicate(arr.map(x=>({code:a2zFirstNonEmpty(x.code,x.itemCode,x.item_code,x.sku,x.productCode,x.id),title:a2zFirstNonEmpty(x.title,x.name,x.productName,x.product_name),price:x.price??x.sellingPrice??x.selling_price??x.amount??x.cost,categories:x.categories??x.category??[],images:x.images??x.photos??x.image??[]})));
+}
+
+function a2zExtractCard(card){
+  const text=card.innerText||card.textContent||'';
+  const codeMatch=text.match(/\bP\d{3,8}\b/i);
+  const priceMatch=text.match(/(?:LKR|Rs\.?|රු\.?)\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i);
+  const title=a2zFirstNonEmpty(card.querySelector('[class*="title" i],[class*="name" i],[class*="product-name" i]')?.textContent,card.querySelector('h1,h2,h3,h4,h5')?.textContent,card.querySelector('a[title]')?.getAttribute('title'),card.querySelector('img[alt]')?.getAttribute('alt'));
+  const cats=[];
+  card.querySelectorAll('[class*="category" i],[class*="cat" i],[data-category]').forEach(el=>{const c=a2zCleanText(el.getAttribute('data-category')||el.textContent);if(c&&c.length<80)cats.push(c)});
+  const images=[];
+  card.querySelectorAll('img').forEach(img=>{
+    const src=img.getAttribute('data-src')||img.getAttribute('data-lazy-src')||img.getAttribute('src'); if(src)images.push(a2zAbsUrl(src));
+    const ss=img.getAttribute('srcset'); if(ss)images.push(a2zAbsUrl(ss.split(',')[0].trim().split(/\s+/)[0]));
+  });
+  return{code:a2zFirstNonEmpty(card.getAttribute('data-code'),card.getAttribute('data-product-code'),codeMatch?.[0]),title,price:a2zNormalizePrice(a2zFirstNonEmpty(card.getAttribute('data-price'),card.querySelector('[data-price]')?.getAttribute('data-price'),priceMatch?.[1])),categories:cats,images};
+}
+
+function parseA2ZHTML(html){
+  const doc=new DOMParser().parseFromString(html,'text/html'),candidates=[],seen=new Set();
+  const selectors=['[data-product-id]','[data-product-code]','[data-code]','.product-card','.product-item','.product','.card','article','li[class*="product" i]','div[class*="product" i]'];
+  for(const sel of selectors)doc.querySelectorAll(sel).forEach(el=>{if(seen.has(el))return;seen.add(el);const p=a2zExtractCard(el);if(p.title&&(p.code||p.price||p.images.length))candidates.push(p)});
+  doc.querySelectorAll('tr').forEach(row=>{const p=a2zExtractCard(row);if(p.title&&(p.code||p.price||p.images.length))candidates.push(p)});
+  return a2zDeduplicate(candidates);
+}
+
+function parseA2ZCSV(csv){
+  const rows=[];let row=[],cell='',q=false;
+  for(let i=0;i<csv.length;i++){const ch=csv[i],nx=csv[i+1];if(ch==='"'&&q&&nx==='"'){cell+='"';i++;continue}if(ch==='"'){q=!q;continue}if(ch===','&&!q){row.push(cell);cell='';continue}if((ch==='\n'||ch==='\r')&&!q){if(ch==='\r'&&nx==='\n')i++;row.push(cell);cell='';if(row.some(x=>String(x).trim()))rows.push(row);row=[];continue}cell+=ch}
+  if(cell||row.length){row.push(cell);rows.push(row)}
+  if(rows.length<2)return[];
+  const headers=rows[0].map(h=>a2zCleanText(h).toLowerCase().replace(/[\s_-]+/g,''));
+  const idx=(...names)=>{for(const n of names){const i=headers.indexOf(n);if(i>=0)return i}return-1};
+  const ci=idx('code','itemcode','productcode','sku','id'),ti=idx('title','name','productname','product'),pi=idx('price','sellingprice','amount','cost'),gi=idx('category','categories','cat'),ii=idx('images','image','photo','photos','imageurl','imageurls');
+  return a2zDeduplicate(rows.slice(1).map(r=>({code:ci>=0?r[ci]:'',title:ti>=0?r[ti]:'',price:pi>=0?r[pi]:0,categories:gi>=0?a2zCleanText(r[gi]).split(/\s*[|;]\s*/).filter(Boolean):[],images:ii>=0?a2zCleanText(r[ii]).split(/\s*[|;]\s*/).filter(Boolean):[]})));
+}
+
+function a2zSetStatus(msg,type='info'){const el=document.getElementById('a2zStatus');if(!el)return;el.className='a2z-status show '+type;el.innerHTML=msg}
+function updateA2ZStats(items=getProducts()){const cats=new Set(),imgs=new Set();(items||[]).forEach(p=>(p.categories||[]).forEach(c=>c&&cats.add(c)));(items||[]).forEach(p=>(p.images||[]).forEach(i=>i&&imgs.add(i)));const el=document.getElementById('a2zStats');if(el)el.innerHTML=`<div class="a2z-stat"><strong>${(items||[]).length.toLocaleString()}</strong><span>Products</span></div><div class="a2z-stat"><strong>${cats.size.toLocaleString()}</strong><span>Categories</span></div><div class="a2z-stat"><strong>${imgs.size.toLocaleString()}</strong><span>Images</span></div>`}
+function openA2ZSync(){const m=document.getElementById('a2zSyncModal');if(m){m.classList.add('show');m.setAttribute('aria-hidden','false');updateA2ZStats(getProducts())}}
+function closeA2ZSync(){const m=document.getElementById('a2zSyncModal');if(m){m.classList.remove('show');m.setAttribute('aria-hidden','true')}}
+function openA2ZSource(){window.open(A2Z_SOURCE_URL,'_blank','noopener,noreferrer')}
+
+function saveA2ZCatalog(items){const clean=a2zDeduplicate(items);if(!clean.length)throw new Error('No valid products were found in the supplied catalog.');localStorage.setItem(A2Z_STORAGE_KEY,JSON.stringify(clean));localStorage.setItem(A2Z_IMPORTED_AT,new Date().toISOString());localStorage.setItem('pickzone_items',JSON.stringify(clean));return clean}
+
+async function importA2ZFile(){
+  const f=document.getElementById('a2zCatalogFile')?.files?.[0];if(!f){a2zSetStatus('Choose a JSON, CSV, or HTML catalog file first.','error');return}
+  a2zSetStatus('Reading and classifying the catalog…','info');
+  try{
+    const txt=await f.text(),ext=(f.name.split('.').pop()||'').toLowerCase();
+    let items=ext==='json'?extractA2ZJsonObject(JSON.parse(txt)):(ext==='csv'?parseA2ZCSV(txt):parseA2ZHTML(txt));
+    items=saveA2ZCatalog(items);renderCategoryFilters();renderItems();renderFeatured();renderCart();updateA2ZStats(items);
+    a2zSetStatus(`<b>Imported ${items.length.toLocaleString()} products.</b><br>Prices, item codes, names and available image URLs were loaded into PickZone. Categories were preserved/classified automatically.`,'success');
+  }catch(err){console.error(err);a2zSetStatus(`<b>Import failed.</b><br>${a2zEscape(err.message||String(err))}`,'error')}
+}
+
+async function tryLiveA2ZSync(){
+  a2zSetStatus('Trying to read the public A2Z product page…','info');
+  try{
+    const res=await fetch(A2Z_SOURCE_URL,{method:'GET',mode:'cors',credentials:'include',cache:'no-store'});
+    if(!res.ok)throw new Error('A2Z returned HTTP '+res.status);
+    const items=parseA2ZHTML(await res.text());if(!items.length)throw new Error('The returned page does not contain product records that can be extracted.');
+    saveA2ZCatalog(items);renderCategoryFilters();renderItems();renderFeatured();renderCart();updateA2ZStats(items);
+    a2zSetStatus(`<b>Live sync imported ${items.length.toLocaleString()} products.</b>`,'success');
+  }catch(err){console.warn('A2Z live sync unavailable:',err);a2zSetStatus(`<b>Live sync could not retrieve the authenticated catalog.</b><br>Use the file importer above with an exported A2Z catalog page/JSON/CSV. Browser cross-origin rules or A2Z authentication may prevent direct reading from PickZone.`,'error')}
+}
+
+function exportA2ZCatalog(){const items=getProducts();const blob=new Blob([JSON.stringify(items,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='pickzone-a2z-catalog.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function removeA2ZCatalog(){if(!confirm('Remove the currently imported A2Z catalog from PickZone and restore the original default products?'))return;localStorage.removeItem(A2Z_STORAGE_KEY);localStorage.removeItem(A2Z_IMPORTED_AT);localStorage.removeItem('pickzone_items');localStorage.setItem('pickzone_items',JSON.stringify(getDefaultProducts()));renderCategoryFilters();renderItems();renderFeatured();renderCart();updateA2ZStats(getProducts());a2zSetStatus('Imported A2Z catalog removed. The original PickZone default catalog is active again.','success')}
+
+renderCategoryFilters=function(){
+  const current=getProducts(),found=new Set(A2Z_CATEGORIES);
+  current.forEach(p=>(p.categories||[]).forEach(c=>{const x=a2zCleanText(c);if(x)found.add(x)}));
+  const cats=['All',...Array.from(found)],holder=document.getElementById('categoryFilters');
+  if(holder)holder.innerHTML=cats.map(c=>`<button class="cat-btn${c==='All'?' active':''}" onclick="filterCategory(${JSON.stringify(c)},this)">${a2zEscape(c)}</button>`).join('')
+};
+
+(function restoreA2ZCatalogBeforeInit(){
+  try{const raw=localStorage.getItem(A2Z_STORAGE_KEY);if(raw){const items=JSON.parse(raw);if(Array.isArray(items)&&items.length)localStorage.setItem('pickzone_items',JSON.stringify(a2zDeduplicate(items)))}}catch(e){console.warn('A2Z cached catalog restore skipped:',e)}
+})();
+
 init();
 </script>
+
+<style>
+/* A2Z catalog integration */
+.a2z-sync-fab{position:fixed;right:24px;bottom:100px;z-index:1700;display:flex;align-items:center;gap:9px;padding:12px 16px;border-radius:28px;background:linear-gradient(135deg,#111827,#6366f1,#ec4899);color:#fff;font-size:12px;font-weight:800;letter-spacing:.2px;box-shadow:0 14px 35px rgba(79,70,229,.35);cursor:pointer;transition:transform .3s,box-shadow .3s}
+.a2z-sync-fab:hover{transform:translateY(-4px) scale(1.03);box-shadow:0 18px 45px rgba(79,70,229,.48)}
+.a2z-modal{position:fixed;inset:0;z-index:5000;display:none;align-items:center;justify-content:center;padding:20px;background:rgba(15,23,42,.72);backdrop-filter:blur(10px)}
+.a2z-modal.show{display:flex}
+.a2z-modal-card{width:min(720px,96vw);max-height:90vh;overflow:auto;background:var(--card);border:1px solid var(--border);border-radius:22px;box-shadow:0 30px 90px rgba(0,0,0,.35)}
+.a2z-modal-head{padding:20px 22px;background:var(--gradient);color:#fff;display:flex;align-items:center;justify-content:space-between;gap:14px}
+.a2z-modal-head h3{font-size:18px;font-weight:800}
+.a2z-modal-close{width:36px;height:36px;border-radius:10px;background:rgba(255,255,255,.18);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.a2z-modal-body{padding:22px}
+.a2z-panel{padding:16px;border:1px solid var(--border);background:var(--bg);border-radius:16px;margin-bottom:14px}
+.a2z-panel h4{font-size:14px;margin-bottom:7px}
+.a2z-panel p{font-size:12px;color:var(--text-secondary);line-height:1.55}
+.a2z-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.a2z-btn{padding:10px 14px;border-radius:10px;font-size:12px;font-weight:700;border:1px solid var(--border);cursor:pointer;transition:.25s}
+.a2z-btn.primary{background:var(--gradient);color:#fff;border-color:transparent}
+.a2z-btn.secondary{background:var(--card);color:var(--text)}
+.a2z-btn.danger{background:rgba(239,68,68,.08);color:var(--danger);border-color:rgba(239,68,68,.25)}
+.a2z-file{width:100%;padding:12px;border:2px dashed var(--border);border-radius:12px;background:var(--card);font-size:12px}
+.a2z-status{margin-top:14px;padding:12px;border-radius:10px;font-size:12px;line-height:1.5;display:none}
+.a2z-status.show{display:block}
+.a2z-status.info{background:rgba(99,102,241,.08);color:var(--primary);border:1px solid rgba(99,102,241,.2)}
+.a2z-status.success{background:rgba(16,185,129,.08);color:#059669;border:1px solid rgba(16,185,129,.2)}
+.a2z-status.error{background:rgba(239,68,68,.08);color:#dc2626;border:1px solid rgba(239,68,68,.2)}
+.a2z-mini{font-size:11px;color:var(--text-secondary);margin-top:8px}
+.a2z-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px}
+.a2z-stat{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;text-align:center}
+.a2z-stat strong{display:block;font-size:20px;color:var(--primary)}
+.a2z-stat span{font-size:10px;color:var(--text-secondary)}
+@media(max-width:680px){.a2z-sync-fab{right:14px;bottom:88px}.a2z-stat-grid{grid-template-columns:1fr}}
+</style>
+<div class="a2z-modal" id="a2zSyncModal" aria-hidden="true">
+  <div class="a2z-modal-card">
+    <div class="a2z-modal-head">
+      <h3><i class="fas fa-cloud-download-alt"></i> A2Z Dropshipping Catalog</h3>
+      <button class="a2z-modal-close" onclick="closeA2ZSync()" aria-label="Close"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="a2z-modal-body">
+      <div class="a2z-panel">
+        <h4>Import your A2Z catalog</h4>
+        <p>PickZone expects each item as <b>code</b>, <b>title</b>, <b>price</b>, <b>images</b> and <b>categories</b>. This importer accepts a catalog JSON, CSV, or an HTML file saved from your authorized A2Z product page. Category labels are preserved when present; otherwise products are classified from their names.</p>
+        <input class="a2z-file" id="a2zCatalogFile" type="file" accept=".json,.csv,.html,.htm,text/html,text/csv,application/json">
+        <div class="a2z-actions">
+          <button class="a2z-btn primary" onclick="importA2ZFile()"><i class="fas fa-file-import"></i> Import Catalog</button>
+          <button class="a2z-btn secondary" onclick="openA2ZSource()"><i class="fas fa-external-link-alt"></i> Open A2Z Product Page</button>
+        </div>
+        <div class="a2z-mini">A2Z source: https://a2zdropshipping.lk/Product/view</div>
+      </div>
+      <div class="a2z-panel">
+        <h4>Catalog tools</h4>
+        <p>Imported products are written to PickZone's existing <code>pickzone_items</code> store, so your current cart, search, category filters and product cards continue using the same data model.</p>
+        <div class="a2z-actions">
+          <button class="a2z-btn secondary" onclick="exportA2ZCatalog()"><i class="fas fa-file-export"></i> Export Current Catalog</button>
+          <button class="a2z-btn danger" onclick="removeA2ZCatalog()"><i class="fas fa-trash"></i> Remove Imported Catalog</button>
+        </div>
+        <div class="a2z-stat-grid" id="a2zStats">
+          <div class="a2z-stat"><strong>0</strong><span>Products</span></div>
+          <div class="a2z-stat"><strong>0</strong><span>Categories</span></div>
+          <div class="a2z-stat"><strong>0</strong><span>Images</span></div>
+        </div>
+      </div>
+      <div class="a2z-panel">
+        <h4>Live sync</h4>
+        <p>The public A2Z page available to this integration currently exposes its marketing/login shell rather than the authenticated product records. A live button is provided for environments where the source permits browser access; the file-import route is the reliable option for a saved catalog export.</p>
+        <div class="a2z-actions">
+          <button class="a2z-btn primary" onclick="tryLiveA2ZSync()"><i class="fas fa-sync-alt"></i> Try Live Sync</button>
+        </div>
+      </div>
+      <div class="a2z-status" id="a2zStatus"></div>
+    </div>
+  </div>
+</div>
+<button class="a2z-sync-fab" onclick="openA2ZSync()" title="Import / sync A2Z Dropshipping catalog"><i class="fas fa-cloud-arrow-down"></i><span>A2Z Catalog</span></button>
+
 </body>
 </html>
