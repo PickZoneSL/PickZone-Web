@@ -1095,12 +1095,19 @@ if(!password||!/^\d{4,}$/.test(password)){showFieldError('suPassword','suPasswor
 if(password!==confirm){showFieldError('suConfirm','suConfirmError','Passwords mismatch');return}
 let users=JSON.parse(localStorage.getItem('pickzone_users')||'[]');
 if(users.find(u=>u.email.toLowerCase()===email.toLowerCase())){showFieldError('suEmail','suEmailError','Already registered');return}
-users.push({email:email.toLowerCase(),whatsapp,password,profilePic:'',orderCount:0,createdAt:new Date().toISOString(),fullName:'',contactNumber2:'',nearestCity:'',district:'',deliveryAddress:''});
+const createdUser={email:email.toLowerCase(),whatsapp,password,profilePic:'',orderCount:0,createdAt:new Date().toISOString(),fullName:'',contactNumber2:'',nearestCity:'',district:'',deliveryAddress:''};
+users.push(createdUser);
 localStorage.setItem('pickzone_users',JSON.stringify(users));
 window.open('https://wa.me/94779783990?text='+encodeURIComponent('My Email is - '+email+' and can you give me the offer "Buy One Get Free Gift" please.'),'_blank');
+/* Creating an account also signs the customer in, so "signed up" members can use Cart, Orders and Arena immediately. */
+currentUser=createdUser;
+localStorage.setItem('pickzone_current_user',JSON.stringify(createdUser));
+const target=window.pzPendingMemberPage||'home';
+window.pzPendingMemberPage='';
 closeModal('signUpModal');
-showAlert('Account Created!','Please sign in to continue.');
-setTimeout(()=>{closeAlert();showSignIn();document.getElementById('siEmail').value=email},1500);
+updateAuthUI();
+showAlert('Account Created!','You are signed in and your PickZone member pages are now unlocked.');
+setTimeout(()=>{closeAlert();navigateTo(target)},900);
 }
 function showFieldError(i,e,m){const input=document.getElementById(i),el=document.getElementById(e),t=el.querySelector('span');input.classList.add('input-error');input.classList.remove('input-success');t.textContent=m;el.classList.add('show');input.focus()}
 
@@ -6477,56 +6484,104 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
     return '<div class="pz-unified-member-gate" data-pz-shared-gate="1">'+
       '<div class="umg-icon"><i class="fas '+icon+'"></i></div>'+
       '<h3>Sign in or sign up to unlock</h3>'+
-      '<p>Please sign in to your PickZone account or create a free account to unlock '+escapeHtml(title)+'.</p>'+
+      '<p>Please sign in to your PickZone account or create a free account to unlock '+escapeHtml(title)+'.</p>'+ 
       '<div class="umg-buttons">'+
-      '<button type="button" class="umg-btn umg-signin" onclick="showSignIn()"><i class="fas fa-sign-in-alt" style="margin-right:7px"></i> Sign In</button>'+
-      '<button type="button" class="umg-btn umg-signup" onclick="showSignUp()"><i class="fas fa-user-plus" style="margin-right:7px"></i> Sign Up Free</button>'+
-      '</div>'+
-      '<div class="umg-foot"><i class="fas fa-shield-alt"></i> Your PickZone member access is protected on this browser.</div>'+
+      '<button type="button" class="umg-btn umg-signin" onclick="showSignIn()"><i class="fas fa-sign-in-alt" style="margin-right:7px"></i> Sign In</button>'+ 
+      '<button type="button" class="umg-btn umg-signup" onclick="showSignUp()"><i class="fas fa-user-plus" style="margin-right:7px"></i> Sign Up Free</button>'+ 
+      '</div>'+ 
+      '<div class="umg-foot"><i class="fas fa-shield-alt"></i> Your PickZone member access is protected on this browser.</div>'+ 
       '</div>';
+  }
+  function getOriginal(el){
+    /* Use the real page snapshot captured by earlier gate layers when available.
+       This avoids restoring another lock screen after a successful login. */
+    if(el.__pzFinalOriginalHTML) return el.__pzFinalOriginalHTML;
+    if(el.__pzOriginalHTML) return el.__pzOriginalHTML;
+    if(el.__pzSharedOriginal) return el.__pzSharedOriginal;
+    if(!el.dataset.pzSharedOriginal){el.dataset.pzSharedOriginal='1';el.__pzSharedOriginal=el.innerHTML;}
+    return el.__pzSharedOriginal;
+  }
+  function rememberAllOriginals(){
+    protectedPages.forEach(page=>{
+      const el=document.getElementById('page-'+page);
+      if(el)getOriginal(el);
+    });
   }
   function apply(page){
     if(!protectedPages.includes(page)||authed())return;
     const el=document.getElementById('page-'+page);if(!el)return;
-    // Store our own original page content exactly once so the shared gate can be removed after login.
-    if(!el.dataset.pzSharedOriginal){el.dataset.pzSharedOriginal='1';el.__pzSharedOriginal=el.innerHTML;}
+    getOriginal(el);
     if(!el.querySelector('[data-pz-shared-gate="1"]')){el.innerHTML=gate(page);el.classList.add('pz-shared-gated');}
   }
   function restore(){
     if(!authed())return;
     protectedPages.forEach(page=>{
-      const el=document.getElementById('page-'+page);if(!el||!el.classList.contains('pz-shared-gated'))return;
-      if(el.__pzSharedOriginal){el.innerHTML=el.__pzSharedOriginal;el.classList.remove('pz-shared-gated');}
+      const el=document.getElementById('page-'+page);if(!el)return;
+      const original=getOriginal(el);
+      if(el.classList.contains('pz-shared-gated') || el.querySelector('[data-pz-shared-gate="1"]') || el.classList.contains('pz-gated') || el.classList.contains('pz-final-gated')){
+        if(original)el.innerHTML=original;
+        el.classList.remove('pz-shared-gated','pz-gated','pz-final-gated');
+      }
     });
+    setTimeout(function(){
+      const page=window.currentPage;
+      if(page==='cart'){
+        if(typeof window.renderMemberCart==='function')window.renderMemberCart();
+        else if(typeof window.renderCart==='function')window.renderCart();
+      }else if(page==='orders'){
+        if(typeof window.renderMemberOrders==='function')window.renderMemberOrders();
+        else if(typeof window.renderOrdersPage==='function')window.renderOrdersPage();
+      }else if(page==='arena' && typeof window.renderMessages==='function'){
+        window.renderMessages();
+      }
+    },30);
   }
   function cleanTrending(){
-    const host=document.getElementById('pzHomeAttract');
-    // Host should only ever live inside Home. Remove stray copies from non-home pages if an earlier script moved one.
+    const home=document.getElementById('page-home');
     document.querySelectorAll('#pzHomeAttract').forEach(el=>{
-      if(el.closest('#page-home')!==document.getElementById('page-home'))el.remove();
+      if(!home || el.closest('#page-home')!==home)el.remove();
     });
-    return host;
   }
   const originalNavigate=window.navigateTo;
   window.navigateTo=function(page){
     if(typeof originalNavigate==='function')originalNavigate(page);
     setTimeout(function(){
-      if(authed())restore();
-      else apply(page);
+      if(authed())restore();else apply(page);
       cleanTrending();
-    },50);
+    },60);
   };
+  /* Remember the protected tab that opened authentication, then return there after success. */
+  window.pzPendingMemberPage=window.pzPendingMemberPage||'';
+  const baseShowSignIn=window.showSignIn;
+  window.showSignIn=function(){
+    if(protectedPages.includes(window.currentPage))window.pzPendingMemberPage=window.currentPage;
+    return typeof baseShowSignIn==='function'?baseShowSignIn.apply(this,arguments):undefined;
+  };
+  const baseShowSignUp=window.showSignUp;
+  window.showSignUp=function(){
+    if(protectedPages.includes(window.currentPage))window.pzPendingMemberPage=window.currentPage;
+    return typeof baseShowSignUp==='function'?baseShowSignUp.apply(this,arguments):undefined;
+  };
+  const baseHandleSignIn=window.handleSignIn;
+  if(typeof baseHandleSignIn==='function')window.handleSignIn=function(){
+    const target=window.pzPendingMemberPage;
+    const result=baseHandleSignIn.apply(this,arguments);
+    if(target){setTimeout(function(){if(authed()&&protectedPages.includes(target)){window.pzPendingMemberPage='';window.navigateTo(target)}},120);}
+    return result;
+  };
+
   const oldAuth=window.updateAuthUI;
   window.updateAuthUI=function(){
     if(typeof oldAuth==='function')oldAuth();
     setTimeout(function(){
-      if(authed())restore();
-      else protectedPages.forEach(apply);
-    },50);
+      if(authed())restore();else protectedPages.forEach(apply);
+    },60);
   };
   function boot(){
+    rememberAllOriginals();
     cleanTrending();
-    if(authed())restore();else if(typeof window.currentPage==='string'&&protectedPages.includes(window.currentPage))apply(window.currentPage);
+    if(authed())restore();
+    else if(typeof window.currentPage==='string'&&protectedPages.includes(window.currentPage))apply(window.currentPage);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,80),{once:true});
   else setTimeout(boot,80);
