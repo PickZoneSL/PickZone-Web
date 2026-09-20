@@ -6444,3 +6444,92 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,60),{once:true});else setTimeout(boot,60);
 })();
 </script>
+
+
+<style id="pz-home-trending-member-gates-final-css">
+/* Trending section belongs to Home only. Keep its host in the Home page and hide it defensively elsewhere. */
+#page-home #pzHomeAttract{display:block}
+/* One shared member gate style for Cart, Orders and Message Arena. */
+.pz-unified-member-gate{position:relative;overflow:hidden;max-width:760px;margin:30px auto;padding:42px 26px;border:1px solid var(--border);border-radius:28px;background:var(--card);box-shadow:0 24px 70px rgba(15,23,42,.14);text-align:center;animation:pageSlideIn .55s cubic-bezier(.16,1,.3,1)}
+.pz-unified-member-gate:before{content:'';position:absolute;inset:-40%;background:radial-gradient(circle,rgba(99,102,241,.12),transparent 55%);animation:pzGatePulse 2.8s infinite;pointer-events:none}
+.pz-unified-member-gate .umg-icon{position:relative;width:92px;height:92px;margin:0 auto 18px;border-radius:28px;background:var(--gradient);display:flex;align-items:center;justify-content:center;color:#fff;font-size:38px;animation:pzGateFloat 2.2s ease-in-out infinite;box-shadow:0 16px 35px rgba(99,102,241,.3)}
+.pz-unified-member-gate h3{position:relative;font-size:25px;font-weight:800;margin-bottom:9px;background:var(--gradient);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.pz-unified-member-gate p{position:relative;max-width:560px;margin:0 auto 22px;font-size:13px;line-height:1.65;color:var(--text-secondary)}
+.pz-unified-member-gate .umg-buttons{position:relative;display:flex;justify-content:center;gap:10px;flex-wrap:wrap}
+.pz-unified-member-gate .umg-btn{position:relative;overflow:hidden;padding:13px 22px;border-radius:14px;font-size:13px;font-weight:800;cursor:pointer;border:0;transition:all .3s}
+.pz-unified-member-gate .umg-btn:before{content:'';position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);transform:translateX(-120%);animation:pzGateShine 2.8s infinite}
+.pz-unified-member-gate .umg-signin{background:var(--gradient);color:#fff;box-shadow:0 10px 28px rgba(99,102,241,.3);animation:pzGatePulse 2.4s infinite}
+.pz-unified-member-gate .umg-signup{background:var(--bg);color:var(--text);border:1px solid var(--border)}
+.pz-unified-member-gate .umg-btn:hover{transform:translateY(-3px) scale(1.02)}
+.pz-unified-member-gate .umg-foot{position:relative;margin-top:15px;font-size:10px;color:var(--text-secondary)}
+@media(max-width:620px){.pz-unified-member-gate{padding:34px 18px}.pz-unified-member-gate h3{font-size:22px}}
+</style>
+<script id="pz-home-trending-member-gates-final-js">
+(function(){
+  'use strict';
+  const protectedPages=['cart','orders','arena'];
+  const pageNames={cart:'your Cart',orders:'your Orders',arena:'Message Arena'};
+  function authed(){return typeof window.isAuthenticated==='function'&&window.isAuthenticated()}
+  function escapeHtml(v){return typeof window.a2zEscape==='function'?window.a2zEscape(v):String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+  function gate(page){
+    const title=pageNames[page]||'this section';
+    const icon=page==='cart'?'fa-lock':page==='orders'?'fa-receipt':'fa-comments';
+    return '<div class="pz-unified-member-gate" data-pz-shared-gate="1">'+
+      '<div class="umg-icon"><i class="fas '+icon+'"></i></div>'+
+      '<h3>Sign in or sign up to unlock</h3>'+
+      '<p>Please sign in to your PickZone account or create a free account to unlock '+escapeHtml(title)+'.</p>'+
+      '<div class="umg-buttons">'+
+      '<button type="button" class="umg-btn umg-signin" onclick="showSignIn()"><i class="fas fa-sign-in-alt" style="margin-right:7px"></i> Sign In</button>'+
+      '<button type="button" class="umg-btn umg-signup" onclick="showSignUp()"><i class="fas fa-user-plus" style="margin-right:7px"></i> Sign Up Free</button>'+
+      '</div>'+
+      '<div class="umg-foot"><i class="fas fa-shield-alt"></i> Your PickZone member access is protected on this browser.</div>'+
+      '</div>';
+  }
+  function apply(page){
+    if(!protectedPages.includes(page)||authed())return;
+    const el=document.getElementById('page-'+page);if(!el)return;
+    // Store our own original page content exactly once so the shared gate can be removed after login.
+    if(!el.dataset.pzSharedOriginal){el.dataset.pzSharedOriginal='1';el.__pzSharedOriginal=el.innerHTML;}
+    if(!el.querySelector('[data-pz-shared-gate="1"]')){el.innerHTML=gate(page);el.classList.add('pz-shared-gated');}
+  }
+  function restore(){
+    if(!authed())return;
+    protectedPages.forEach(page=>{
+      const el=document.getElementById('page-'+page);if(!el||!el.classList.contains('pz-shared-gated'))return;
+      if(el.__pzSharedOriginal){el.innerHTML=el.__pzSharedOriginal;el.classList.remove('pz-shared-gated');}
+    });
+  }
+  function cleanTrending(){
+    const host=document.getElementById('pzHomeAttract');
+    // Host should only ever live inside Home. Remove stray copies from non-home pages if an earlier script moved one.
+    document.querySelectorAll('#pzHomeAttract').forEach(el=>{
+      if(el.closest('#page-home')!==document.getElementById('page-home'))el.remove();
+    });
+    return host;
+  }
+  const originalNavigate=window.navigateTo;
+  window.navigateTo=function(page){
+    if(typeof originalNavigate==='function')originalNavigate(page);
+    setTimeout(function(){
+      if(authed())restore();
+      else apply(page);
+      cleanTrending();
+    },50);
+  };
+  const oldAuth=window.updateAuthUI;
+  window.updateAuthUI=function(){
+    if(typeof oldAuth==='function')oldAuth();
+    setTimeout(function(){
+      if(authed())restore();
+      else protectedPages.forEach(apply);
+    },50);
+  };
+  function boot(){
+    cleanTrending();
+    if(authed())restore();else if(typeof window.currentPage==='string'&&protectedPages.includes(window.currentPage))apply(window.currentPage);
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(boot,80),{once:true});
+  else setTimeout(boot,80);
+})();
+</script>
+
