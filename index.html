@@ -8356,3 +8356,201 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
   if(document.body)observer.observe(document.body,{childList:true,subtree:true});
 })();
 </script>
+
+
+<!-- PICKZONE FINAL USER REQUEST: Order Now + instant fullscreen boot + fast product photos -->
+<style id="pz-final-order-now-fast-load-css">
+/* The requested Order Now control belongs directly under Grand Total. */
+#pzOrderNowSummaryBtn{
+  display:flex!important;width:100%!important;align-items:center!important;justify-content:center!important;gap:9px!important;
+  margin-top:12px!important;padding:14px 18px!important;border:0!important;border-radius:13px!important;
+  background:var(--gradient)!important;color:#fff!important;font-weight:900!important;font-size:14px!important;
+  cursor:pointer!important;box-shadow:0 10px 26px rgba(54,217,255,.18)!important;transition:transform .22s ease,box-shadow .22s ease,filter .22s ease!important;
+}
+#pzOrderNowSummaryBtn:hover{transform:translateY(-2px)!important;box-shadow:0 14px 30px rgba(54,217,255,.26)!important;filter:saturate(1.05)!important}
+#pzOrderNowSummaryBtn:disabled{opacity:.45!important;cursor:not-allowed!important;box-shadow:none!important;transform:none!important}
+/* Prevent older cart purchase buttons from creating a second CTA at the same place. */
+#cartSummary .pz-cart-summary-buy,#cartSummary #pzCartBuyWhatsApp,#cartSummary .pz-cart-whatsapp-buy{display:none!important}
+/* Disable the older long loader implementations: the new loader below is intentionally brief. */
+#loadingScreen{display:none!important;visibility:hidden!important;opacity:0!important;pointer-events:none!important}
+html.pz-boot body{visibility:visible!important}
+body.pz-v9-initial-loading{overflow:hidden!important}
+
+/* Product photos: no intentional photo-delay / no loading animation on visible cards. */
+.item-card img.product-photo,
+.pz-reco-card img,
+.pz-home-cat-card img,
+.pz-order-item img,
+#productDetailBox img.product-photo{
+  loading:eager!important;
+  opacity:1!important;
+  filter:none!important;
+  animation:none!important;
+}
+.item-card img.product-photo.is-loading{opacity:1!important;filter:none!important;animation:none!important}
+
+/* Full-screen boot overlay. It never waits for every network image. */
+#pzInstantBootLoader{
+  position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;
+  flex-direction:column;gap:12px;background:linear-gradient(135deg,#020508 0%,#0A1319 52%,#15323B 100%);
+  color:#EAFBFE;opacity:1;visibility:visible;pointer-events:auto;transition:opacity .18s ease,visibility .18s ease;
+}
+#pzInstantBootLoader.is-hidden{opacity:0;visibility:hidden;pointer-events:none}
+#pzInstantBootLoader .loader-logo{width:76px;height:76px;border-radius:20px;object-fit:cover;box-shadow:0 16px 38px rgba(0,0,0,.35);border:2px solid rgba(116,234,243,.35);animation:pzInstantLogo .8s ease-in-out infinite alternate}
+#pzInstantBootLoader .loader-title{font-size:22px;font-weight:900;letter-spacing:.8px}
+#pzInstantBootLoader .loader-sub{font-size:11px;color:#8EA6AD}
+#pzInstantBootLoader .loader-bar{width:180px;height:4px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:3px}
+#pzInstantBootLoader .loader-bar>span{display:block;width:45%;height:100%;background:linear-gradient(90deg,#8AF1F7,#35D7E5,#169AB0);animation:pzInstantBar .55s ease-in-out infinite alternate}
+@keyframes pzInstantLogo{from{transform:translateY(0) scale(.98)}to{transform:translateY(-4px) scale(1.03)}}
+@keyframes pzInstantBar{from{transform:translateX(-110%)}to{transform:translateX(360%)}}
+</style>
+<script id="pz-final-order-now-fast-load-js">
+(function(){
+  'use strict';
+
+  function getCartSafe(){
+    try{
+      if(typeof cart!=='undefined' && Array.isArray(cart)) return cart;
+    }catch(e){}
+    return Array.isArray(window.cart)?window.cart:[];
+  }
+
+  function selectedItems(){
+    return getCartSafe().filter(function(x){return x && x.selected!==false});
+  }
+
+  function moveOrderNowButton(){
+    var summary=document.getElementById('cartSummary');
+    if(!summary)return;
+    var grand=summary.querySelector('#cartGrandTotal');
+    var grandRow=grand ? grand.closest('.row') : null;
+    if(!grandRow)return;
+
+    var btn=document.getElementById('pzOrderNowSummaryBtn');
+    if(!btn){
+      btn=document.createElement('button');
+      btn.id='pzOrderNowSummaryBtn';
+      btn.type='button';
+      btn.innerHTML='<i class="fas fa-bag-shopping"></i> Order Now';
+      btn.addEventListener('click',function(){
+        var items=selectedItems();
+        if(!items.length){
+          if(typeof window.showAlert==='function')window.showAlert('Select Items','Please select at least one item before ordering.');
+          return;
+        }
+        if(typeof window.startCartOrder==='function')window.startCartOrder();
+      });
+    }
+    btn.disabled=!selectedItems().length;
+    if(btn.previousElementSibling!==grandRow || btn.parentElement!==summary){
+      grandRow.insertAdjacentElement('afterend',btn);
+    }
+  }
+
+  /* Also hook the active renderer so the CTA survives every cart refresh. */
+  function hookCartRender(){
+    if(window.__pzOrderNowRenderHooked)return;
+    var base=window.renderCart;
+    if(typeof base!=='function')return;
+    window.__pzOrderNowRenderHooked=true;
+    window.renderCart=function(){
+      var r=base.apply(this,arguments);
+      setTimeout(moveOrderNowButton,0);
+      setTimeout(moveOrderNowButton,40);
+      return r;
+    };
+  }
+
+  /* Fast product-photo pass: resolve each visible product image immediately and prioritize it. */
+  function fastenImages(root){
+    var scope=root||document;
+    scope.querySelectorAll('img').forEach(function(img){
+      try{
+        var source=img.dataset && img.dataset.pzPhotoSource;
+        if(source){
+          var resolved=(typeof window.fastImg==='function')?window.fastImg(source):source;
+          if(resolved && img.getAttribute('src')!==resolved)img.src=resolved;
+          img.dataset.pzResolved=resolved||source;
+        }
+        if(img.classList.contains('product-photo') || img.closest('.item-card,.pz-reco-card,.pz-home-cat-card,.pz-order-item,#productDetailBox')){
+          img.loading='eager';
+          img.decoding='async';
+          try{img.fetchPriority='high'}catch(e){}
+          img.classList.remove('is-loading');
+          img.style.opacity='1';
+          img.style.filter='none';
+          img.style.animation='none';
+        }
+      }catch(e){}
+    });
+  }
+
+  function primeCatalogImagesQuickly(){
+    try{
+      var products=typeof getProducts==='function'?(getProducts()||[]):[];
+      var seen=new Set(),urls=[];
+      products.forEach(function(p){
+        (Array.isArray(p&&p.images)?p.images:[]).forEach(function(url){
+          if(url && !seen.has(url)){seen.add(url);urls.push(url)}
+        });
+      });
+      /* Start a small non-blocking cache warmup after the first paint.
+         It does not delay page visibility. */
+      var i=0;
+      function batch(){
+        var end=Math.min(i+18,urls.length);
+        for(;i<end;i++){
+          try{
+            var src=(typeof window.fastImg==='function')?window.fastImg(urls[i]):urls[i];
+            var img=new Image();img.decoding='async';try{img.fetchPriority='low'}catch(e){};img.src=src;
+          }catch(e){}
+        }
+        if(i<urls.length){
+          if('requestIdleCallback' in window)requestIdleCallback(batch,{timeout:120});
+          else setTimeout(batch,60);
+        }
+      }
+      setTimeout(batch,80);
+    }catch(e){}
+  }
+
+  function showInstantLoader(){
+    if(document.getElementById('pzInstantBootLoader'))return;
+    var overlay=document.createElement('div');
+    overlay.id='pzInstantBootLoader';
+    overlay.innerHTML='<img class="loader-logo" src="https://www.image2url.com/r2/default/images/1788805311773-68d75ded-4271-402e-93dd-dd9b79cee693.png" alt="PickZone"><div class="loader-title">PickZone</div><div class="loader-sub">Loading your shopping experience...</div><div class="loader-bar"><span></span></div>';
+    document.body.appendChild(overlay);
+    /* Fixed short duration: never waits for the whole catalog or every photo. */
+    setTimeout(function(){
+      overlay.classList.add('is-hidden');
+      setTimeout(function(){overlay.remove()},220);
+      document.body.classList.remove('pz-v9-initial-loading');
+      try{document.documentElement.classList.remove('pz-boot')}catch(e){}
+    },650);
+  }
+
+  function init(){
+    showInstantLoader();
+    hookCartRender();
+    moveOrderNowButton();
+    fastenImages(document);
+    primeCatalogImagesQuickly();
+    setTimeout(fastenImages,80);
+    setTimeout(fastenImages,220);
+    setTimeout(moveOrderNowButton,80);
+    setTimeout(moveOrderNowButton,220);
+  }
+
+  if(document.body){
+    var mo=new MutationObserver(function(){
+      fastenImages(document);
+      moveOrderNowButton();
+      hookCartRender();
+    });
+    mo.observe(document.body,{childList:true,subtree:true});
+  }
+
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});
+  else init();
+})();
+</script>
